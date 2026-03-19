@@ -15,10 +15,10 @@ class Settings(BaseSettings):
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24小时
 
     # ---------- MySQL 数据库 ----------
-    DATABASE_HOST: str = "localhost"
+    DATABASE_HOST: str = ""
     DATABASE_PORT: int = 3306
-    DATABASE_USER: str = "root"
-    DATABASE_PASSWORD: str = "123456"
+    DATABASE_USER: str = ""
+    DATABASE_PASSWORD: str = ""
     DATABASE_NAME: str = "essay_grading_system"
 
     @property
