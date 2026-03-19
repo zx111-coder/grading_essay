@@ -1,2 +1,9 @@
 # 忽略essay_grading_system文件夹环境变量文件
 essay_grading_system/.env
+
+# 忽略 Python 编译产物
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
