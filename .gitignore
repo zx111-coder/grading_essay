@@ -1,0 +1,2 @@
+# 忽略essay_grading_system文件夹环境变量文件
+essay_grading_system/.env
