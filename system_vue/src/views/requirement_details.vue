@@ -12,7 +12,7 @@
             <div class="task-meta">
               <span class="meta-item">
                 <el-icon><Document /></el-icon>
-                已提交：{{ statistics.submitted }}/{{ statistics.total }}人
+                已批改：{{ comments }}/{{ statistics.submitted }}人
               </span>
               <span class="meta-item">
                 <el-icon><Checked /></el-icon>
@@ -93,7 +93,7 @@
       <div class="essay-list-section">
         <div class="section-header">
           <h2 class="section-title">📚 学生作文列表</h2>
-          <span class="essay-count">共 {{ filteredEssays.length }} 篇作文</span>
+          <span class="essay-count">共 {{ filteredEssays.length }} 篇已批改作文</span>
         </div>
   
         <el-table
@@ -210,7 +210,7 @@
   </template>
   
   <script setup>
-  import { ref, reactive, computed, onMounted } from 'vue'
+  import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
   import { useRouter, useRoute } from 'vue-router'
   import { ElMessage } from 'element-plus'
   import { 
@@ -221,17 +221,20 @@
   import taskApi from '@/api/tasks'
   import getGradeLabel from '@/utils/grade'
   import Dashboard from '@/views/dashboard.vue'
-  import historyApi from '@/api/history'
+  import useCommentStore from '@/stores/dashboard.js';
 
+  const commentStore = useCommentStore();
+  const isAnalyzing = computed(() => commentStore.isAnalyzing)
   const router = useRouter()
   const route = useRoute()
   const taskId = route.params.taskId
   
   // 数据状态
   const loading = ref(false)
+  const refreshTimer = ref(null) // 定时器引用
   const taskInfo = ref({})
   const essays = ref([])
-  
+  const comments = ref(0)
   // 排序和筛选
   const sortOrder = ref('desc')
   const searchKeyword = ref('')
@@ -275,7 +278,13 @@
   // 过滤和排序后的作文列表
   const filteredEssays = computed(() => {
     let filtered = essays.value
-    
+    // ⭐ 关键修改：过滤掉分数为空的数据
+    filtered = filtered.filter(e => {
+      // 检查分数是否存在且有效（不为 null、undefined、空字符串，且不是 NaN）
+      const hasValidScore = e.score != null && e.score !== '' && !isNaN(e.score)
+      return hasValidScore
+    })
+    comments.value = filtered.length
     // 搜索过滤
     if (searchKeyword.value) {
       filtered = filtered.filter(e => 
@@ -398,6 +407,17 @@
   
   onMounted(() => {
     fetchData()
+    if(isAnalyzing.value){
+      // 每2分钟刷新一次
+      refreshTimer.value = setInterval(() => {
+        fetchData()
+      }, 2 * 60 * 1000)      
+    }
+  })
+
+  onUnmounted(() => {
+    clearInterval(refreshTimer.value)
+    refreshTimer.value = null
   })
   </script>
   
@@ -565,6 +585,7 @@
   .essay-count {
     color: #909399;
     font-size: 14px;
+    line-height: 1.8em;
     background: #f0f2f5;
     padding: 4px 12px;
     border-radius: 20px;

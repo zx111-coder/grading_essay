@@ -107,7 +107,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { 
   Plus, Key, School, InfoFilled, 
@@ -115,24 +115,36 @@ import {
 } from '@element-plus/icons-vue'
 import ClassDetail from './class_details.vue'
 import studentApi from '@/api/student' 
-
-// 状态管理
+import useCommentStore from '@/stores/dashboard.js';
+const commentStore = useCommentStore();
+const isAnalyzing = computed(() => commentStore.isAnalyzing)
 const hasClass = ref(false) // 是否已加入班级
 const classId = ref(0) // 班级信息
 const classCode = ref('') // 输入的邀请码
 const joining = ref(false) // 加入中状态
-
 // 成功弹窗
 const showSuccessDialog = ref(false)
 const newClassName = ref('')
+const refreshTimer = ref(null) // 定时器引用
 
 // 获取学生班级信息
 const fetchMyClass = async () => {
   try {
-    // 调用API获取学生已加入的班级
+    // if(isAnalyzing.value){
+    //   // 调用API获取学生已加入的班级
+    //   const cacheData = getSessionWithExpire(CLASS_STORAGE_KEY)
+    //   if(cacheData){
+    //     console.log("从缓存读取班级信息")
+    //     hasClass.value = true
+    //     classId.value = cacheData.class_id
+    //     return // 直接结束，不请求后端
+    //   }
+    // }
     const response = await studentApi.getMyClass()
     console.log("学生加入的班级信息响应：", response);
     if (response.data) {
+      // 保存带 3 分钟过期的缓存
+      // setSessionWithExpire(CLASS_STORAGE_KEY, response.data, 3)
       hasClass.value = true
       classId.value = response.data.class_id
     }
@@ -160,7 +172,7 @@ const handleJoinClass = async () => {
       newClassName.value = response.data.class_name
       classId.value = response.data.class_id
       hasClass.value = true
-      
+      // setSessionWithExpire(CLASS_STORAGE_KEY, response.data, 3)
       // 显示成功弹窗
       showSuccessDialog.value = true
       // 清空输入
@@ -182,6 +194,14 @@ const handleLeaveClass = () => {
 
 onMounted(() => {
   fetchMyClass()
+  if(isAnalyzing.value){
+    // 每2分钟刷新一次班级信息，确保状态更新
+    refreshTimer.value = setInterval(fetchMyClass, 2 * 60 * 1000)
+  }
+})
+onUnmounted(() => {
+  clearInterval(refreshTimer.value)
+  refreshTimer.value = null
 })
 </script>
 

@@ -12,10 +12,10 @@ class Essay(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     word_count = Column(Integer, nullable=True)
     upload_date = Column(DateTime, nullable=True)
-    grade = Column(Integer, nullable=False)
+    grade = Column(Integer, nullable=True)
     requirement = Column(Text, nullable=True)
     title = Column(VARCHAR(200), nullable=True)
-    paragraphs = Column(JSON, nullable=False)
+    paragraphs = Column(JSON, nullable=True)
 
     # 关系
     task = relationship("EssayTask", back_populates="essays")

@@ -164,6 +164,7 @@ async def get_class_detail(
                 essay_count=0,  # 学生不需要 essay_count，给个默认值
                 class_name=class_item.class_name,
                 student_count=student_count,
+                task_finish=task.get("task_finish", False),  # 学生需要这个字段
                 user_submitted=task.get("user_submitted", False),  # 学生需要这个字段
                 essay_id=task.get("essay_id", None)
             ))

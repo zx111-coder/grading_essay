@@ -9,6 +9,7 @@ from app.models.classes import Class, ClassStudent
 from app.schemas.classes import ClassCreate, ClassUpdate
 from app.models.essay_tasks import EssayTask  # 导入作文题目模型
 from app.models.essays import Essay  # 导入作文模型
+from app.models.comments import Comment
 from app.schemas.essay_tasks import TaskForStudentResponse, TaskForTeacherResponse
 
 
@@ -164,9 +165,14 @@ class ClassService:
                 ).first()
                 if essay:
                     task_data["user_submitted"] = True
-                    task_data["essay_id"] = essay.id  # ✅ 添加 essay_id 字段
+                    task_data["essay_id"] = essay.id
+                    comment = db.query(Comment).filter(
+                        Comment.essay_id == essay.id
+                    ).first()
+                    task_data["task_finish"] = comment is not None
                 else:
                     task_data["user_submitted"] = False
+                    task_data["task_finish"] = False  # 学生未提交，task_finish 默认为 False
                     task_data["essay_id"] = None  # 或者不添加这个字段
                 task_data["essay_count"] = 0  # 学生不需要 essay_count，但为了类型匹配给个默认值
 

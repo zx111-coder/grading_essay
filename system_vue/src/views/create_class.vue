@@ -254,7 +254,7 @@ const formatDate = (date) => {
 
 // 进入班级详情
 const goToClassDetail = (classId) => {
-  router.push(`/class/${classId}`)
+  router.push(`/classes/class/${classId}`)
 }
 
 // 处理解散班级

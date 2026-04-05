@@ -27,10 +27,10 @@
             <h3>已上传的文件 ({{ uploadData.files.length }})</h3>
             <div class="files-list">
               <div v-for="(file, index) in uploadData.files" :key="index" class="file-item">
-                <div class="file-icon">
+                <div class="file-icon" @click.stop="preview_file(file, $event)">
                   {{ getFileIcon(file.name) }}
                 </div>
-                <div class="file-info">
+                <div class="file-info" @click="preview_file(file, $event)">
                   <p class="file-name">{{ file.name }}</p>
                   <p class="file-size">{{ formatFileSize(file.size) }}</p>
                 </div>
@@ -105,15 +105,39 @@
           </div>
         </div>
       </div>
-
+      <!-- 文件预览弹窗 -->
+      <div v-if="showPreviewDialog" class="preview-dialog-overlay" @click="closePreview">
+        <div class="preview-dialog" @click.stop>
+          <div class="preview-header">
+            <h3>{{ previewFile?.name }}</h3>
+            <button @click="closePreview" class="close-btn">×</button>
+          </div>
+          <div class="preview-content">
+            <!-- 图片预览 -->
+            <div v-if="isImageFile(previewFile?.name)" class="image-preview">
+              <img :src="imagePreviewUrl" :alt="previewFile?.name" />
+            </div>
+          </div>
+          <div class="preview-actions">
+            <button @click="closePreview" class="cancel-btn">关闭</button>
+          </div>
+        </div>
+      </div>
       <!-- 后端处理后的文字显示 -->
       <div v-if="showContent" class="result-dialog-overlay">
         <div class="result-dialog">
           <!-- 弹窗头部 -->
           <div class="dialog-header">
-            <h3>识别结果</h3>
-            <button @click="showContent = false" class="close-btn">×</button>
+            <div class="header-top">
+              <h3>识别结果</h3>
+              <button @click="showContent = false" class="close-btn">×</button>         
+            </div>
+            <div class="tips-bar">
+              <span class="tips-icon">✏️</span>
+              <span class="tips-text">请仔细核对识别结果，确保作文内容和要求准确无误后再进行分析</span>
+            </div> 
           </div>
+
           <!-- 弹窗内容 -->
           <div class="dialog-content result-content">
             <div class="text-container">
@@ -159,7 +183,7 @@
           <div class="dialog-actions">
             <button @click="showContent = false" class="cancel-btn">取消</button>
             <button @click="startAnalysis" class="analysis-btn">
-              开始分析
+              {{ uploadData.taskId == 0 ? "开始分析" : "提交作文"}}
             </button>
           </div>
         </div>
@@ -172,7 +196,6 @@
   import { ElMessage } from 'element-plus'
   import 'element-plus/es/components/message/style/css'
   import upload_api from '@/api/upload.js'
-  import analysis_api from '@/api/analysis.js'
   import {useRouter, useRoute} from 'vue-router'
   import useCommentStore from '@/stores/dashboard.js';
   import useUserStore from '@/stores/user.js';
@@ -226,6 +249,10 @@
   // 确认对话框
   const showConfirmDialog = ref(false)
   const showContent = ref(false)
+  // 文件预览相关变量
+  const previewFile = ref(null)
+  const showPreviewDialog = ref(false)
+  const imagePreviewUrl = ref('')
   // 触发文件选择
   const triggerFileInput = () => {
     fileInput.value.click()
@@ -286,7 +313,73 @@
     const grade = grades.value.find(g => g.value === value)
     return grade ? grade.label : ''
   }
+  // 判断文件类型
+  const isPDFFile = (fileName) => {
+    if (!fileName) return false
+    return fileName.match(/\.(pdf)$/i)
+  }
 
+  const isImageFile = (fileName) => {
+    if (!fileName) return false
+    return fileName.match(/\.(jpg|jpeg|png)$/i)
+  }
+
+  const isWordFile = (fileName) => {
+    if (!fileName) return false
+    return fileName.match(/\.(docx)$/i)
+  }
+
+  // 获取文件类型标签
+  const getFileTypeLabel = (fileName) => {
+    if (!fileName) return '未知类型'
+    if (isPDFFile(fileName)) return 'PDF文档'
+    if (isImageFile(fileName)) return '图片文件'
+    if (isWordFile(fileName)) return 'Word文档'
+    return '未知类型'
+  }
+
+  // 预览文件
+  const preview_file = (file, event) => {
+    // 阻止事件冒泡
+    if (event) {
+      event.stopPropagation()
+    }
+    if (!file) return
+    previewFile.value = file
+    console.log('预览文件:', file);
+    // 图片直接显示，文档下载后才显示
+    if (isImageFile(file.name)) {
+      imagePreviewUrl.value = URL.createObjectURL(file)
+      showPreviewDialog.value = true
+    } else{
+      downloadFile()
+    }
+  }
+  // 关闭预览
+  const closePreview = () => {
+    // 清理URL对象，避免内存泄漏
+    if (imagePreviewUrl.value) {
+      URL.revokeObjectURL(imagePreviewUrl.value)
+      imagePreviewUrl.value = ''
+    }
+    showPreviewDialog.value = false
+    previewFile.value = null
+  }
+
+  // 下载文件
+  const downloadFile = () => {
+    if (!previewFile.value) return
+    const url = URL.createObjectURL(previewFile.value)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = previewFile.value.name
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    
+    ElMessage.success('开始下载文件')
+  }
   // 格式化当前时间为「YYYY-MM-DD HH:mm:ss」格式（上传时间专用）
   const formatCurrentTime = () => {
     const date = new Date()
@@ -367,7 +460,14 @@
       // 1. 启动分析流
       commentStore.startAnalysis(analysisText);
       // 2. 立即跳转
-      router.push('/dashboard');
+      if(uploadData.taskId == 0){
+        router.push('/dashboard');
+      } else {
+        setTimeout(() => {
+          ElMessage.success('作文提交成功')
+          router.push('/myClass');          
+        }, 1000)
+      }
     } catch (error) {
       console.error('启动分析失败:', error);
       ElMessage.error('启动分析失败，请重试');
@@ -440,7 +540,6 @@
   
   .upload-area:hover {
     border-color: #3498db;
-    background-color: #f8fafc;
   }
   
   .upload-placeholder {
@@ -573,7 +672,7 @@
   }
   
   textarea {
-    width: 100%;
+    width: 98%;
     padding: 12px;
     border: 1px solid #ddd;
     border-radius: 6px;
@@ -616,6 +715,178 @@
     transform: translateY(0);
   }
   
+  /*文件预览样式*/
+  .preview-dialog-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.7);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 2000;
+  }
+
+  .preview-dialog {
+    background: white;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 900px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+  }
+
+  .preview-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px;
+    background: #f8f9fa;
+    border-bottom: 1px solid #eee;
+  }
+
+  .preview-header h3 {
+    margin: 0;
+    color: #2c3e50;
+    font-size: 1.1rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    margin-right: 20px;
+  }
+
+  .preview-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 15px;
+  }
+
+  .image-preview {
+    text-align: center;
+  }
+
+  .image-preview img {
+    width: 100%;
+    height: 100%;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+  .word-options {
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+    margin-top: 20px;
+  }
+
+  .preview-placeholder {
+    text-align: center;
+    padding: 40px;
+    background: #f8f9fa;
+    border-radius: 8px;
+  }
+
+  .placeholder-icon {
+    font-size: 4rem;
+    display: block;
+    margin-bottom: 20px;
+  }
+
+  .preview-placeholder p {
+    color: #7f8c8d;
+    margin-bottom: 20px;
+  }
+
+  .file-details {
+    margin-top: 20px;
+    padding: 15px;
+    background: #f8f9fa;
+    border-radius: 8px;
+  }
+
+  .file-details h4 {
+    margin: 0 0 10px 0;
+    color: #2c3e50;
+  }
+
+  .file-details p {
+    margin: 8px 0;
+    font-size: 0.9rem;
+    color: #555;
+  }
+
+  .preview-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 15px;
+    padding: 20px;
+    border-top: 1px solid #eee;
+  }
+  .preview-btn {
+    background: #67c23a;
+    color: white;
+    border: none;
+    padding: 8px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background 0.3s;
+  }
+
+  .preview-btn:hover {
+    background: #529b2e;
+  }
+  
+  .download-btn {
+    background: #3498db;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background 0.3s;
+  }
+
+  .download-btn:hover {
+    background: #2980b9;
+  }
+
+  /* 文件列表悬停效果 */
+  .file-item {
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .file-item:hover {
+    background: #e8f4f8;
+  }
+
+  .file-icon, .file-info {
+    cursor: pointer;
+  }
+
+  @media (max-width: 768px) {
+    .preview-dialog {
+      width: 95%;
+      max-height: 80vh;
+    }
+    
+    .pdf-preview iframe {
+      height: 300px;
+    }
+    
+    .image-preview img {
+      max-height: 300px;
+    }
+  }
+
+
   /* 识别结果弹窗样式 */
   .result-dialog-overlay {
     position: fixed;
@@ -632,7 +903,7 @@
   }
   
   .result-dialog {
-    background: white;
+    background: #f8f9fa;
     border-radius: 12px;
     width: 90%;
     max-width: 800px; /* 比确认弹窗宽，适配文本编辑 */
@@ -651,7 +922,7 @@
   
   .text-container {
     background: #f8f9fa;
-    border: 1px solid #eee;
+    /*border: 1px solid #eee;*/
     border-radius: 6px;
     padding: 20px;
     max-height: none;
@@ -686,20 +957,28 @@
     line-height: 1.8; /* 增大行高，提升可读性 */
     letter-spacing: 0.5px; /* 优化中文排版 */
   }
-  .dialog-header {
+  .result-dialog .dialog-header {
     display: flex;
-    justify-content: space-between;
+    flex-direction: column;
     align-items: center;
     padding: 20px;
-    background: #f8f9fa;
-    border-bottom: 1px solid #eee;
+    background-color: #ffffff;
+    border-bottom: 1px solid #ffffff;
   }
   
   .dialog-header h3 {
     margin: 0;
     color: #2c3e50;
+    font-size: 1.3rem;
   }
   
+  .dialog-header .header-top {
+    width: 100%;
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+  }
   .close-btn {
     background: none;
     border: none;
@@ -719,6 +998,20 @@
     color: #e74c3c;
   }
   
+  .tips-bar {
+    width: 100%;
+    margin-top: 3px;
+  }
+  .tips-bar .tips-icon {
+    margin-left: 2px;
+    font-size: 0.9rem;
+  }
+  .tips-bar .tips-text {
+    margin-left: 2px;
+    font-size: 0.85rem;
+    color: #828889;
+  }
+
   .dialog-content {
     padding: 20px;
   }
@@ -751,6 +1044,7 @@
   }
   
   .dialog-actions {
+    background-color: #ffffff;
     display: flex;
     justify-content: flex-end;
     padding: 20px;
@@ -761,6 +1055,7 @@
   .cancel-btn {
     background: #95a5a6;
     color: white;
+    font-size: 0.8rem;
     border: none;
     padding: 10px 20px;
     border-radius: 6px;
@@ -770,7 +1065,7 @@
   }
   
   .cancel-btn:hover {
-    background: #7f8c8d;
+    background: #788586;
   }
   
   .confirm-btn {
@@ -789,11 +1084,11 @@
   }
   
   .analysis-btn {
-    background: #27ae60;
+    background: #218896;
     color: white;
     border: none;
     padding: 10px 20px; /* 适配弹窗按钮尺寸 */
-    font-size: 1rem; /* 适配弹窗按钮尺寸 */
+    font-size: 0.8rem; /* 适配弹窗按钮尺寸 */
     border-radius: 6px;
     cursor: pointer;
     font-weight: 600;
@@ -801,7 +1096,7 @@
   }
   
   .analysis-btn:hover {
-    background: #219653;
+    background: #218896;
     transform: translateY(-2px);
   }
   

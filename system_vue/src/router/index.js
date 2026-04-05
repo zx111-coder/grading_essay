@@ -2,6 +2,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import useUserStore from '@/stores/user'
 import { ElMessage } from 'element-plus'
+import { computed } from 'vue'
 const router = createRouter({
   history: createWebHistory(),
   routes: [
@@ -28,19 +29,18 @@ const router = createRouter({
     name: 'analysis',
     component: () => import('@/views/analysis.vue'),
     meta: {
-      title: '作文批改',  // 定义路由元信息（动态展示界面）
+      title: '上传',  // 定义路由元信息（动态展示界面）
       requiresAuth: true,  // 需要登录
       roles: ['student', 'teacher']  // 允许所有角色访问
     }
   },
   {
     path: '/dashboard',
-    name: 'dashboard',
+    name: 'MyHistoryDashboard',
     component: () => import('@/views/dashboard.vue'),
     meta: {
-      title: '作文点评',  // 定义路由元信息（动态展示界面）
-      requiresAuth: true,  // 需要登录
-      roles: ['student', 'teacher']  // 允许所有角色访问
+      title: '作文批改',
+      roles: ['student','teacher']
     }
   },
   {
@@ -50,6 +50,26 @@ const router = createRouter({
     meta: {
       title: '班级管理',  // 定义路由元信息（动态展示界面）
       requiresAuth: true,  // 需要登录
+      roles: ['teacher']  
+    }
+  },
+  {
+    path: '/classes/class/:classId',
+    name: 'ClassDetail',
+    component: () => import('@/views/class_details.vue'),  // 班级详情页面
+    meta: { 
+      title: '班级详情',
+      breadcrumb: '班级管理',
+      roles: ['student', 'teacher']  
+    }
+  },
+  {
+    path: '/classes/class/:classId/task/:taskId',
+    name: 'RequirementDetail',
+    component: () => import('@/views/requirement_details.vue'),  // 作文题目详情页面
+    meta: { 
+      title: '题目详情',
+      breadcrumb: '班级管理 > 班级详情',
       roles: ['teacher']  
     }
   },
@@ -64,6 +84,26 @@ const router = createRouter({
     }
   },
   {
+    path: '/myClass/upload',
+    name: 'MyClassUpload',
+    component: () => import('@/views/analysis.vue'),
+    meta: {
+      title: '上传作文',
+      breadcrumb: '我的班级',
+      roles: ['student']
+    }
+  },
+  {
+    path: '/myClass/dashboard',
+    name: 'MyClassDashboard',
+    component: () => import('@/views/dashboard.vue'),
+    meta: {
+      title: '作文详情',
+      breadcrumb: '我的班级',
+      roles: ['student']
+    }
+  },
+  {
     path: '/history',
     name: 'history',
     component: () => import('@/views/history.vue'),
@@ -74,23 +114,13 @@ const router = createRouter({
     }
   },
   {
-    path: '/class/:classId',
-    name: 'ClassDetail',
-    component: () => import('@/views/class_details.vue'),  // 班级详情页面
-    meta: { 
-      requiresAuth: true,  // 需要登录
-      title: '班级详情',
-      roles: ['student', 'teacher']  
-    }
-  },
-  {
-    path: '/class/:classId/task/:taskId',
-    name: 'RequirementDetail',
-    component: () => import('@/views/requirement_details.vue'),  // 作文题目详情页面
-    meta: { 
-      requiresAuth: true,  // 需要登录
-      title: '题目详情',
-      roles: ['teacher']  
+    path: '/history/dashboard',
+    name: 'MyHistoryDashboard',
+    component: () => import('@/views/dashboard.vue'),
+    meta: {
+      title: '作文详情',
+      breadcrumb: '历史记录',
+      roles: ['student','teacher']
     }
   }
   // 404 页面
@@ -107,12 +137,8 @@ const router = createRouter({
 })
 // 添加全局路由守卫
 router.beforeEach((to, from, next) => {
-  // 设置页面标题
-  document.title = to.meta.title ? `${to.meta.title} - 作文批改系统` : '作文批改系统'
-  
   // 获取用户 store
   const userStore = useUserStore()
-  
   // 判断是否需要登录
   if (to.meta.requiresAuth) {
     // 需要登录但未登录
@@ -141,7 +167,7 @@ router.beforeEach((to, from, next) => {
     next({ path: '/' })
     return
   }
-  
+
   // 其他情况正常放行
   next()
 })

@@ -43,4 +43,5 @@ class TaskForTeacherResponse(TaskResponse):
 class TaskForStudentResponse(TaskResponse):
     """学生视角的任务响应"""
     user_submitted: bool = False  # 直接给默认值
+    task_finish: bool = False  # 直接给默认值
     essay_id: Optional[int] = None

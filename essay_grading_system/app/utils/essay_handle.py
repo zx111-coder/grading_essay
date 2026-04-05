@@ -48,5 +48,4 @@ def count_words_like_word(text):
     # # 处理破折号
     # text = re.sub(r'-{2,}', '—', text)
     # text = re.sub(r'—{2,}', '—', text)
-    print("处理后的作文：", text)
     return len(text)

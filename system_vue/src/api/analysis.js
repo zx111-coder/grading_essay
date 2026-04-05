@@ -32,7 +32,7 @@ const api = {
         let reader = null;
         
         try {
-            const response = await fetch(path.baseUrl + '/analysis', {
+            const response = await fetch(path.streamUrl + '/analysis', {
                 method: 'POST',
                 body: formData,
             });

@@ -145,7 +145,7 @@
   </template>
   
   <script setup>
-  import { ref, onMounted, markRaw, nextTick,computed } from 'vue'
+  import { ref, onMounted, markRaw, nextTick, computed, onUnmounted } from 'vue'
   import { useRouter } from 'vue-router'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { Search, Delete, Edit } from '@element-plus/icons-vue'
@@ -159,6 +159,7 @@
   const commentStore = useCommentStore()
   // 数据
   const loading = ref(false) // 加载状态
+  const refreshTimer = ref(null) // 定时器引用
   const historyList = ref([]) // 历史记录列表
   const total = ref(0)
   const currentPage = ref(1) // 当前页
@@ -322,7 +323,7 @@
     }
     // 跳转到 dashboard，并传递 essayId 参数
     router.push({
-      path: '/dashboard',
+      path: '/history/dashboard',
       query: { historyId: essayId }
     })
   }
@@ -417,6 +418,16 @@
   
   onMounted(() => {
     fetchHistory()
+    if(isAnalyzing.value) {
+       // 每2分钟刷新一次
+      refreshTimer.value = setInterval(() => {
+        fetchHistory()
+      }, 2 * 60 * 1000)
+    }
+  })
+  onUnmounted(() => {
+    clearInterval(refreshTimer.value)
+    refreshTimer.value = null
   })
   </script>
   

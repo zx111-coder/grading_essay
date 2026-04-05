@@ -30,7 +30,7 @@
       > 
         <el-menu-item class="li" index="/">
           <el-icon class="icon"><DocumentAdd /></el-icon>
-          <template #title>上传作文</template>
+          <template #title>{{ isTeacher ? "上传作文" : "平时练习"}}</template>
         </el-menu-item>
         <el-menu-item 
           v-if="isTeacher" 
@@ -47,10 +47,6 @@
         >
           <el-icon class="icon"><DocumentChecked /></el-icon>
           <template #title>我的班级</template>
-        </el-menu-item>
-        <el-menu-item class="li" index="/dashboard">
-          <el-icon class="icon"><DocumentChecked /></el-icon>
-          <template #title>评分展示</template>
         </el-menu-item>
         <el-menu-item class="li" index="/history">
           <el-icon class="icon"><Memo /></el-icon>
@@ -100,7 +96,10 @@
     <div class="main-content" :class="{ 'full-width': !userStore.isLoggedIn }">
       <!-- 顶部导航栏 - 登录后显示 -->
       <div class="custom-header" v-if="userStore.isLoggedIn">
-        <h2>{{ route.meta.title }}</h2>
+        <h3>
+          {{ route.meta.breadcrumb ? route.meta.breadcrumb + ' > ' : '' }}
+          {{ route.name === 'analysis'? (userStore.role === 'teacher' ? '作文批改' :'平时练习'): route.meta.title }}
+        </h3>
       </div>
       
       <!-- 主要内容区 -->
@@ -129,7 +128,8 @@ const isTeacher = computed(() => userStore.role === 'teacher')
 const isStudent = computed(() => userStore.role === 'student')
 const isCollapsed = ref(false)
 const activePath = ref(route.path)
-const avatarColor = ref('#409eff');//用户头像的颜色值
+const avatarColor = ref('#409eff')  //用户头像的颜色值
+const isFromClassUpload = ref(false) //从班级上传页面跳转到上传页面的标志
 // 切换侧边栏
 const toggleSidebar = () => {
   isCollapsed.value = !isCollapsed.value
@@ -139,7 +139,23 @@ const toggleSidebar = () => {
 watch(
   () => route.path,
   (newPath) => {
-    activePath.value = newPath
+    // 优先判断：子路由 → 激活父级菜单
+    if (newPath.startsWith('/myClass/')) {
+      // 学生班级子路由 → 激活 /myClass
+      activePath.value = '/myClass'
+    }
+    else if (newPath.startsWith('/classes/')) {
+      // 老师班级子路由 → 激活 /classes
+      activePath.value = '/classes'
+    }
+    else if (newPath.startsWith('/history/')) {
+      // 如果你以后加点评子路由
+      activePath.value = '/history'
+    }
+    else {
+      // 正常页面
+      activePath.value = newPath
+    }
   },
   { immediate: true }
 )

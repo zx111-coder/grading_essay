@@ -11,7 +11,7 @@ from .student import router as student_router
 all_routers = [
     # 格式：(router实例, 前缀, 标签)
     (upload_router, "/api", ["文件上传"]),
-    (analysis_router, "/api", ["作文分析"]),
+    # (analysis_router, "/api", ["作文分析"]),
     (auth_router, "/api/auth", ["用户认证"]),
     (history_router, "/api", ["历史记录"]),
     (class_router, "/api", ["班级管理"]),

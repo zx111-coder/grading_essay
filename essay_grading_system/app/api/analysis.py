@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.services.analysis_service import analyze_composition_text
 from app.services.database_service import DataService  # 导入数据库服务
 import asyncio
+from app.schemas.essays import EssayCreate
 router = APIRouter()
 
 
@@ -22,6 +23,29 @@ async def analysis(
         db: Session = Depends(get_db)  # 注入数据库会话
 ):
     print("task_id:", task_id)
+    print("开始存入essays表")
+    essay_data = EssayCreate(
+        user_id=user_id,
+        task_id=task_id if task_id > 0 else None,
+        word_count=None,
+        upload_date=None,
+        grade=grade,
+        requirement=requirements,
+        title=None,
+        paragraphs=None
+    )
+    try:
+        # 保存初始 essay 记录，获取 essay_id
+        saved_essay = DataService.save_essay(db, essay_data)
+        if not saved_essay or not saved_essay.id:
+            raise HTTPException(status_code=500, detail="创建作文记录失败")
+
+        essay_id = saved_essay.id
+        print(f"📝 预创建essay成功，ID: {essay_id}")
+        db.commit()  # 提交，确保记录存在
+    except Exception as e:
+        print(f"❌ 预创建essay失败：{str(e)}")
+        raise HTTPException(status_code=500, detail="创建作文记录失败")
     """
     流式作文分析接口
     返回 Server-Sent Events (SSE) 格式
@@ -93,8 +117,8 @@ async def analysis(
                         correction_data = chunk.get("data", {})  # 批改的最终结果
                         if correction_data:
                             from app.schemas.comments import CommentCreate  # 数据库
-                            from app.schemas.essays import EssayCreate
                             from datetime import datetime
+                            from app.models.essays import Essay
                             # 🔴 将字符串转换为 datetime 对象
                             upload_time_str = correction_data.get("upload_time")
                             if upload_time_str:
@@ -108,22 +132,16 @@ async def analysis(
                             else:
                                 upload_date = datetime.now()
                                 print(f"📅 没有上传时间，使用当前时间: {upload_date}")
-                            essay_data = EssayCreate(
-                                user_id=user_id,
-                                task_id=task_id if task_id > 0 else None,
-                                word_count=correction_data.get("words_count"),
-                                upload_date=upload_date,
-                                grade=grade,
-                                requirement=correction_data.get("requirements"),
-                                title=correction_data.get("title"),
-                                paragraphs=correction_data.get("paragraphs")
-                            )
+
                             try:
-                                saved_essay = DataService.save_essay(db, essay_data)
-                                print(f"📝 保存essay成功，ID: {saved_essay.id if saved_essay else '无'}")
-                                if saved_essay and saved_essay.id:
-                                    essay_id = saved_essay.id
-                                    from app.schemas.comments import CommentCreate
+                                essay = db.query(Essay).filter(Essay.id == essay_id).first()
+                                if essay:
+                                    essay.title = correction_data.get("title")
+                                    essay.paragraphs = correction_data.get("paragraphs")
+                                    essay.word_count = correction_data.get("words_count")
+                                    essay.upload_date = upload_date
+                                    db.commit()
+                                    print(f"✅ 更新essay成功，ID: {essay_id}")
                                     # 保存comment且修复
                                     comment_create = CommentCreate(
                                         essay_id=essay_id,

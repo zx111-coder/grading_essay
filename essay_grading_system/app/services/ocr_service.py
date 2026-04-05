@@ -1,16 +1,279 @@
 # app/services/ocr_service.py
 import base64
 from app import APP_CONFIG  # 导入全局配置字典
-import io  # 处理内存流
+import statistics
+import numpy as np
+import cv2
 from tencentcloud.common import credential
 from tencentcloud.common.exception.tencent_cloud_sdk_exception import TencentCloudSDKException
 # 导入通用高精度OCR的模块（腾讯云官方命名）
 from tencentcloud.ocr.v20181119 import ocr_client, models
 # 导入图片预处理
-from app.services.image_preprocessor import preprocess_image_for_ocr
+from app.services.image_preprocessor import is_screenshot_image, preprocess_image_for_ocr, get_strike_line_mask, \
+    is_word_struck_out
 
 
-def ocr_image(image_stream):
+# ===================== 作文专属优化函数（核心，确保准确度）=====================
+def optimize_essay_text(ocr_text):
+    """
+    作文专属优化：删除冗余字符、修正OCR识别错误、规整分段，保留学生真实错别字
+    核心逻辑：只修正OCR识别导致的明显误写（如形近字、音近字识别偏差），不修正学生真实写错的字
+    """
+    # 1. 删除冗余字符（修正栏、修正柱、无效符号等，适配作文批改场景）
+    redundant_chars = ["修正栏", "修正柱", "修正", "IN", "in"]
+    for char in redundant_chars:
+        ocr_text = ocr_text.replace(char, "")
+    import re
+    ocr_text = re.sub(r'\d+x\d+=\d+', '', ocr_text)  # 删除 16x25=400 这类算式
+    ocr_text = re.sub(r'[<>|]', '', ocr_text)  # 删除特殊符号
+    # 2. 只修正【OCR识别错误】（不修正学生真实错别字）
+    # 仅修正：OCR大概率识别偏差的形近字、音近字，学生不可能主动写错的搭配
+    ocr_error_correction = {
+        # OCR常见识别错误（学生不会主动这么写）
+        "甚致至": "甚至",  # OCR多识别一个字，非学生错误
+        "看着完": "看完",  # OCR语序识别错误，非学生错误
+        "自过我": "自己",  # OCR笔画识别偏差，非学生错误
+        ".": "。",
+        "I": "",
+        "9120": ""
+    }
+    # 循环替换，不拆词，避免误改学生真实书写
+    for wrong, correct in ocr_error_correction.items():
+        ocr_text = ocr_text.replace(wrong, correct)
+    # 3. 清理多余空格（但保留段落结构）
+    ocr_text = ocr_text.replace(" ", "").strip()
+    return ocr_text
+
+
+# ===================== 辅助函数：区分OCR错误和学生错别字（可选调用）=====================
+def get_ocr_errors(original_ocr, optimized_ocr):
+    """
+    对比优化前后的文本，提取OCR识别错误（供老师参考，避免误判学生）
+    返回：OCR识别错误列表，格式[{"错误文字": "xxx", "修正后": "xxx"}]
+    """
+    errors = []
+    # 简单对比，提取差异（仅针对OCR识别错误的修正）
+    if original_ocr != optimized_ocr:
+        # 按字符对比，筛选出OCR修正的部分（简化逻辑，适配作文场景）
+        original_chars = list(original_ocr)
+        optimized_chars = list(optimized_ocr)
+        min_len = min(len(original_chars), len(optimized_chars))
+        for i in range(min_len):
+            if original_chars[i] != optimized_chars[i]:
+                # 避免单个字符偏差误判，取前后各1个字符对比
+                original_context = original_ocr[max(0, i - 1):min(len(original_ocr), i + 2)]
+                optimized_context = optimized_ocr[max(0, i - 1):min(len(optimized_ocr), i + 2)]
+                errors.append({
+                    "错误文字": original_context,
+                    "修正后": optimized_context,
+                    "说明": "推测为OCR识别错误，非学生真实错别字"
+                })
+    return errors
+
+
+# 手写图片
+def hand_ocr_image(image_stream):
+    """
+    调用腾讯云通用高精度OCR识别图片文字
+    """
+    try:
+        # 获取配置
+        TENCENT_SECRET_ID = APP_CONFIG.get('TENCENT_SECRET_ID')
+        TENCENT_SECRET_KEY = APP_CONFIG.get('TENCENT_SECRET_KEY')
+        TENCENT_REGION = APP_CONFIG.get('TENCENT_OCR_REGION')
+
+        if not all([TENCENT_SECRET_ID, TENCENT_SECRET_KEY, TENCENT_REGION]):
+            return {
+                "success": False,
+                "error": "OCR配置错误",
+                "text": "", "text_lines": [], "ocr_errors": []
+            }
+
+        processed_base64 = None
+        if processed_base64:
+            print("图片预处理成功")
+            image_base64 = processed_base64
+        else:
+            image_stream.seek(0)
+            image_base64 = base64.b64encode(image_stream.read()).decode("utf-8")
+
+        # ===================== 【生成删除线掩码】 =====================
+        image_stream.seek(0)
+        img_array = np.frombuffer(image_stream.read(), np.uint8)
+        img = cv2.imdecode(img_array, cv2.IMREAD_GRAYSCALE)
+        _, binary = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        strike_mask = get_strike_line_mask(binary)
+
+        # 初始化腾讯云客户端
+        cred = credential.Credential(TENCENT_SECRET_ID, TENCENT_SECRET_KEY)
+        client = ocr_client.OcrClient(cred, TENCENT_REGION)
+
+        # 构造请求
+        req = models.GeneralAccurateOCRRequest()  # 创建OCR请求对象
+        req.ImageBase64 = image_base64  # 传入图片（Base64）
+        req.EnableDetectSplit = True  # 开启“分段检测”
+        req.IsWords = True  # 开启“按单词/单字返回”
+
+        resp = client.GeneralAccurateOCR(req)  # 发给阿里云 OCR 服务器
+        # 解析结果
+        if resp.TextDetections:
+            text_lines = []
+
+            for item in resp.TextDetections:
+                if item.Confidence < 50:
+                    continue
+
+                line_text = item.DetectedText
+                words = item.Words
+                coord_points = item.WordCoordPoint if hasattr(item, 'WordCoordPoint') else []
+
+                kept_chars = []
+                max_idx = min(len(words), len(coord_points))
+
+                for idx in range(max_idx):
+                    word = words[idx]
+                    coord = coord_points[idx]
+                    char = word.Character
+
+                    polygon = [{"x": pt.X, "y": pt.Y} for pt in coord.WordCoordinate]
+
+                    # 被划掉就不保留
+                    if not is_word_struck_out(polygon, strike_mask):
+                        kept_chars.append(char)
+
+                cleaned_text = ''.join(kept_chars)
+
+                text_lines.append({
+                    "text": cleaned_text,
+                    "confidence": item.Confidence,
+                    "polygon": [{"x": pt.X, "y": pt.Y} for pt in item.Polygon]
+                })
+
+            # ===================== 基于缩进的段落重组 =====================
+            if text_lines:
+                # 1. 给每个块计算中心点Y和左边界X（稳定排序的基础）
+                for line in text_lines:
+                    if line['polygon']:
+                        ys = [p['y'] for p in line['polygon']]
+                        xs = [p['x'] for p in line['polygon']]
+                        line['center_y'] = sum(ys) / len(ys)
+                        line['left_x'] = min(xs)
+                    else:
+                        line['center_y'] = 0
+                        line['left_x'] = 0
+
+                # 2. 按中心点Y排序（解决乱序），同一行按左边界X排序
+                text_lines.sort(key=lambda x: (round(x['center_y'], -1), x['left_x']))
+
+                # 3. 合并同一行的所有碎块（最关键！）
+                merged_lines = []
+                current_line = None
+                # 你的作文格子用 25-30 最合适，防止行内碎块被分到下一行
+                line_merge_threshold = 28
+
+                for line in text_lines:
+                    text = line['text'].strip()
+                    if not text:
+                        continue
+
+                    if current_line is None:
+                        current_line = {
+                            'text': text,
+                            'left_x': line['left_x'],
+                            'center_y': line['center_y']
+                        }
+                    else:
+                        # 判断Y坐标差距是否在合并阈值内
+                        if abs(line['center_y'] - current_line['center_y']) < line_merge_threshold:
+                            # 合并碎块（追加空格保证单词间分离）
+                            current_line['text'] += " " + text
+                            current_line['left_x'] = min(current_line['left_x'], line['left_x'])
+                        else:
+                            # 差距大，说明是新的一行，把当前行存入结果
+                            merged_lines.append(current_line)
+                            current_line = {
+                                'text': text,
+                                'left_x': line['left_x'],
+                                'center_y': line['center_y']
+                            }
+                # 循环结束后，把最后一行加进去
+                if current_line:
+                    merged_lines.append(current_line)
+
+                # 4. 计算基准左边界（用合并后的行，极度准确）
+                left_margins = [l['left_x'] for l in merged_lines if l['left_x'] > 0]
+                if not left_margins:
+                    raw_ocr_text = "\n".join([l['text'] for l in merged_lines])
+                else:
+                    # 取中位数作为基准，稳定抗干扰
+                    baseline_left = statistics.median(left_margins)
+                    # 缩进阈值：针对方格本，两个字宽度建议 35-40
+                    indent_threshold_px = 38
+
+                    # 5. 纯缩进分段（无任何智能判断，你要的方式）
+                    paragraphs = []
+                    current_para = []
+
+                    for line in merged_lines:
+                        text = line['text'].strip()
+                        if not text:
+                            continue
+
+                        # 只判断缩进
+                        is_indented = (line['left_x'] - baseline_left) > indent_threshold_px
+
+                        if is_indented:
+                            # 有缩进是新段落，先保存上一段
+                            if current_para:
+                                paragraphs.append(''.join(current_para))
+                            current_para = [text]
+                        else:
+                            # 无缩进，追加到当前段落
+                            current_para.append(text)
+
+                    # 保存最后一段
+                    if current_para:
+                        paragraphs.append(''.join(current_para))
+
+                    # 段落之间用空行分隔
+                    raw_ocr_text = "\n\n".join(paragraphs)
+
+                # 5. 后续优化（你保留的代码）
+                optimized_ocr_text = optimize_essay_text(raw_ocr_text)
+                ocr_errors = get_ocr_errors(raw_ocr_text, optimized_ocr_text)
+                return {
+                    "success": True,
+                    "text": optimized_ocr_text,
+                    "original_ocr_text": raw_ocr_text,
+                    "ocr_errors": ocr_errors,
+                    "text_lines": text_lines,
+                    "language": resp.Language if hasattr(resp, 'Language') else "zh"
+                }
+            else:
+                return {
+                    "success": False, "error": "未识别到文字",
+                    "text": "", "original_ocr_text": "", "ocr_errors": [], "text_lines": []
+                }
+        else:
+            return {
+                "success": False, "error": "未识别到文字",
+                "text": "", "original_ocr_text": "", "ocr_errors": [], "text_lines": []
+            }
+
+    except TencentCloudSDKException as e:
+        return {
+            "success": False, "error": f"腾讯云OCR调用失败：{e.message}",
+            "text": "", "original_ocr_text": "", "ocr_errors": [], "text_lines": []
+        }
+    except Exception as e:
+        return {
+            "success": False, "error": f"OCR识别失败：{str(e)}",
+            "text": "", "original_ocr_text": "", "ocr_errors": [], "text_lines": []
+        }
+
+
+# 截图图片
+def screenshot_ocr_image(image_stream):
     """
     调用腾讯云通用高精度OCR识别图片文字
     :param image_path: 本地图片文件路径（如app/static/uploads/xxx.png）
@@ -166,3 +429,16 @@ def ocr_image(image_stream):
             "text": "",
             "text_lines": []
         }
+
+
+def ocr_image(image_stream):
+    # 预处理图片
+    iss = is_screenshot_image(image_stream)
+    if iss:
+        print("🖥️  判定为：截图 → 执行预处理")
+        return screenshot_ocr_image(image_stream)
+    else:
+        print("✍️ 判定为：手写作文 → 不预处理（保持高精度）")
+        return hand_ocr_image(image_stream)
+
+

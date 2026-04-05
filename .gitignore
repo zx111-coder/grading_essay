@@ -7,3 +7,7 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+
+# 忽略 PyCharm 配置
+.idea/
+EOF

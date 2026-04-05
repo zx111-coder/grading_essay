@@ -112,7 +112,7 @@
               size="small"
               @click="goToTaskDetail(task)"
             >
-              {{ userRole === 'teacher' ? '查看详情' : (task.user_submitted ? '查看作文' : '立即上传') }}
+              {{ userRole === 'teacher' ? '查看详情' : (task.user_submitted ? (task.task_finish ? '查看作文' : '等待批改') : '立即上传') }}
             </el-button>
             <!-- 老师：直接显示删除按钮 -->
             <el-button 
@@ -219,7 +219,11 @@ import dayjs from 'dayjs'
 import useUserStore from '@/stores/user.js'
 import classApi from '@/api/classes'
 import taskApi from '@/api/tasks'
-
+import useCommentStore from '@/stores/dashboard.js'
+const commentStore = useCommentStore()
+const isAnalyzing = computed(() => commentStore.isAnalyzing)
+// 班级详情缓存 key
+const CLASS_DETAIL_STORAGE_KEY = 'class_detail_info'
 const props = defineProps({
   classId: {
     type: [Number],
@@ -233,6 +237,32 @@ const classId = computed(() => props.classId || route.params.classId)
 
 // 用户角色
 const userRole = computed(() => userStore.role)
+
+// 带过期时间缓存（3分钟）
+const setSessionWithExpire = (key, data, expireMinutes = 3) => {
+  const obj = {
+    data: data,
+    time: Date.now(),
+    expire: expireMinutes * 60 * 1000
+  }
+  sessionStorage.setItem(key, JSON.stringify(obj))
+}
+
+// 读取并自动判断过期
+const getSessionWithExpire = (key) => {
+  const item = sessionStorage.getItem(key)
+  if (!item) return null
+  try {
+    const obj = JSON.parse(item)
+    if (Date.now() - obj.time > obj.expire) {
+      sessionStorage.removeItem(key)
+      return null
+    }
+    return obj.data
+  } catch (e) {
+    return null
+  }
+}
 
 // 班级详情数据
 const classDetail = reactive({
@@ -272,6 +302,30 @@ const copyClassCode = (code) => {
 const fetchClassData = async () => {
   loading.value = true
   try {
+    // if(isAnalyzing.value){
+    //   const cacheData = getSessionWithExpire(CLASS_DETAIL_STORAGE_KEY)
+    //   if (cacheData) {
+    //     console.log('作文分析中，使用班级缓存')
+    //     let tasks = cacheData.tasks || []
+    //     tasks = tasks.map((task) => {
+    //       const localSubmitted = localStorage.getItem(`submitted_task_${task.id}`)
+    //       const finalSubmitted = localSubmitted ? true : task.user_submitted
+    //       if (task.user_submitted) {
+    //         localStorage.removeItem(`submitted_task_${task.id}`)
+    //       }
+    //       return { ...task, user_submitted: finalSubmitted }
+    //     })
+    //     classDetail.className = cacheData.className
+    //     classDetail.classCode = cacheData.classCode
+    //     classDetail.studentCount = cacheData.studentCount
+    //     classDetail.teacherName = cacheData.teacherName
+    //     classDetail.createTime = cacheData.createTime
+    //     taskList.value = tasks || []
+    //     taskForm.class_id = cacheData.id
+    //     loading.value = false
+    //     return
+    //   }
+    // }
     const response = await classApi.getClassDetail(classId.value)
     console.log('班级详情接口返回:', response);
     if(response.status==200){
@@ -282,6 +336,32 @@ const fetchClassData = async () => {
       classDetail.createTime = response.data.createTime
       taskList.value = response.data.tasks || []
       taskForm.class_id = response.data.id
+      // let tasks = response.data.tasks || [];
+      // tasks = tasks.map((task) => {
+      //   // 1. 先看本地有没有这个任务的提交标记
+      //   const localSubmitted = localStorage.getItem(`submitted_task_${task.id}`);
+        
+      //   // 2. 如果本地有标记，强制设为已提交；否则用后端返回的状态
+      //   const finalSubmitted = localSubmitted ? true : task.user_submitted;
+        
+      //   // 3. 如果后端已经返回true，说明数据已同步，删除本地标记
+      //   if (task.user_submitted) {
+      //     localStorage.removeItem(`submitted_task_${task.id}`);
+      //   }
+      //   // 4. 返回处理后的任务对象
+      //   return {
+      //     ...task,
+      //     user_submitted: finalSubmitted,
+      //   };
+      // });
+      // // 5. 赋值给taskList
+      // taskList.value = tasks;
+      // taskForm.class_id = response.data.id;
+      // // 存入缓存 3 分钟
+      // setSessionWithExpire(CLASS_DETAIL_STORAGE_KEY, {
+      //   ...response.data,
+      //   tasks: tasks
+      // }, 3)
     }
   } catch (error) {
     ElMessage.error('获取班级信息失败')
@@ -324,12 +404,12 @@ const submitTask = async () => {
 // 进入题目详情
 const goToTaskDetail = (task) => {
   if (userRole.value === 'teacher') {
-    router.push(`/class/${classId.value}/task/${task.id}`)
+    router.push(`/classes/class/${classId.value}/task/${task.id}`)
   } else {
     if (!task.user_submitted) {
       // 学生：跳转到根路径（analysis.vue），并传递任务信息
       router.push({
-        path: '/',  // 修改为根路径
+        path: '/myClass/upload', 
         query: {
           requirement: task.requirement,
           taskId: task.id,
@@ -337,10 +417,15 @@ const goToTaskDetail = (task) => {
         }
       })
     } else {
-      router.push({
-      path: '/dashboard',
-      query: { historyId: task.essay_id }
-    })
+      if(!task.task_finish){
+        ElMessage.info('作文已提交，等待老师批改中...')
+        return
+      } else{
+        router.push({
+          path: '/myClass/dashboard',
+          query: { historyId: task.essay_id }
+        })
+      }
     }
   }
 }
